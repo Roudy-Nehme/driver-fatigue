@@ -21,8 +21,13 @@ FEATURE_NAMES = [
     "left_ear",
     "right_ear",
     "avg_ear",
+    "min_ear",
     "mouth_open_ratio",
     "eye_asymmetry",
+    "yaw_proxy",
+    "roll_angle_deg",
+    "eye_to_mouth_ratio",
+    "mouth_to_chin_ratio",
     "face_height_width_ratio",
     "nose_center_x",
 ]
@@ -30,6 +35,12 @@ FEATURE_NAMES = [
 
 def euclidean(p1, p2):
     return np.linalg.norm(np.array(p1) - np.array(p2))
+
+
+def safe_div(a, b):
+    if abs(b) < 1e-6:
+        return 0.0
+    return float(a / b)
 
 
 def get_point(face_landmarks, idx, image_w, image_h):
@@ -63,6 +74,23 @@ def mouth_open_ratio(upper_lip, lower_lip, mouth_left, mouth_right):
     return float(mouth_open / mouth_width)
 
 
+def eye_center(eye_points):
+    return np.mean(np.array(eye_points), axis=0)
+
+
+def roll_angle_deg(left_eye_center, right_eye_center):
+    dx = right_eye_center[0] - left_eye_center[0]
+    dy = right_eye_center[1] - left_eye_center[1]
+    angle_rad = np.arctan2(dy, dx)
+    return float(np.degrees(angle_rad))
+
+
+def yaw_proxy(nose_tip, left_face, right_face):
+    face_center_x = (left_face[0] + right_face[0]) / 2.0
+    face_width = euclidean(left_face, right_face)
+    return safe_div((nose_tip[0] - face_center_x), face_width)
+
+
 def extract_fatigue_features_from_landmarks(face_landmarks, image_w, image_h):
     left_eye = [get_point(face_landmarks, idx, image_w, image_h) for idx in LEFT_EYE_IDX]
     right_eye = [get_point(face_landmarks, idx, image_w, image_h) for idx in RIGHT_EYE_IDX]
@@ -70,12 +98,19 @@ def extract_fatigue_features_from_landmarks(face_landmarks, image_w, image_h):
     left_ear = eye_aspect_ratio(left_eye)
     right_ear = eye_aspect_ratio(right_eye)
     avg_ear = (left_ear + right_ear) / 2.0
+    min_ear = min(left_ear, right_ear)
     eye_asymmetry = abs(left_ear - right_ear)
+
+    left_eye_ctr = eye_center(left_eye)
+    right_eye_ctr = eye_center(right_eye)
+    eyes_mid = (left_eye_ctr + right_eye_ctr) / 2.0
 
     upper_lip = get_point(face_landmarks, UPPER_LIP_IDX, image_w, image_h)
     lower_lip = get_point(face_landmarks, LOWER_LIP_IDX, image_w, image_h)
     mouth_left = get_point(face_landmarks, MOUTH_LEFT_IDX, image_w, image_h)
     mouth_right = get_point(face_landmarks, MOUTH_RIGHT_IDX, image_w, image_h)
+    mouth_ctr = (upper_lip + lower_lip) / 2.0
+
     mar = mouth_open_ratio(upper_lip, lower_lip, mouth_left, mouth_right)
 
     nose_tip = get_point(face_landmarks, NOSE_TIP_IDX, image_w, image_h)
@@ -85,17 +120,28 @@ def extract_fatigue_features_from_landmarks(face_landmarks, image_w, image_h):
 
     face_height = euclidean(nose_tip, chin)
     face_width = euclidean(left_face, right_face)
-    face_height_width_ratio = float(face_height / face_width) if face_width > 1e-6 else 0.0
+    face_height_width_ratio = safe_div(face_height, face_width)
 
-    nose_center_x = float(nose_tip[0] / image_w)
+    yaw = yaw_proxy(nose_tip, left_face, right_face)
+    roll = roll_angle_deg(left_eye_ctr, right_eye_ctr)
+
+    eye_to_mouth_ratio = safe_div(euclidean(eyes_mid, mouth_ctr), face_height)
+    mouth_to_chin_ratio = safe_div(euclidean(mouth_ctr, chin), face_height)
+
+    nose_center_x = safe_div(nose_tip[0], image_w)
 
     feature_vector = np.array(
         [
             left_ear,
             right_ear,
             avg_ear,
+            min_ear,
             mar,
             eye_asymmetry,
+            yaw,
+            roll,
+            eye_to_mouth_ratio,
+            mouth_to_chin_ratio,
             face_height_width_ratio,
             nose_center_x,
         ],
